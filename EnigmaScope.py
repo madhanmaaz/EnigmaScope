@@ -156,6 +156,8 @@ class EnigmaScope:
     def writeSource(self, filePath):
         if os.path.exists(filePath) and os.path.isfile(filePath):
             fileName = os.path.basename(filePath)
+            fileName = self.filterFilename(fileName)
+            
             with open(filePath, "rb") as f:
                 binData = f.read()
                 encryptedData = Encryptor.encrypt(self.password, binData)
@@ -174,6 +176,7 @@ class EnigmaScope:
         if 'http' in filePath:
             try:
                 fileName = filePath.split("/")[-1]
+                fileName = self.filterFilename(fileName)
                 res = requests.get(filePath, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"})
                 
                 if res.status_code == 200:
@@ -240,6 +243,14 @@ class EnigmaScope:
                 return
             
         Printer.err(f"ID not found")
+
+    
+    def filterFilename(self, filename):
+        chars = '\\/:*?"<>|'
+        for c in chars:
+           filename = filename.replace(c, '')
+        return filename
+
 
     def helpMenu(self):
         print('''
