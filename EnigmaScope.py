@@ -150,7 +150,7 @@ class EnigmaScope:
                 data[fileName]['size']
             ])
         
-        print(f"\n{tabulate(tableData, headers=["ID", "FILE", "TIME", "SIZE"])}\n")
+        print(f'\n{tabulate(tableData, headers=["ID", "FILE", "TIME", "SIZE"])}\n')
 
     
     def writeSource(self, filePath):
