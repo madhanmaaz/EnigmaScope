@@ -14,8 +14,8 @@ pip install -r requirements.txt
 ```
 
 > [!IMPORTANT]
-> When the file gets edited, all secure contents of the file are lost.
-> There is no recovery option if you forget the password.
+> - When the file gets edited, all secure contents of the file are lost.
+> - There is no recovery option if you forget the password.
 
 #### Usage
 1. Load an Image File.
