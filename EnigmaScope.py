@@ -10,6 +10,7 @@ import base64
 import json
 import zlib
 import os
+import re
 
 
 class Printer:
@@ -245,10 +246,9 @@ class EnigmaScope:
         Printer.err(f"ID not found")
 
     
-    def filterFilename(self, filename):
-        chars = '\\/:*?"<>|'
-        for c in chars:
-           filename = filename.replace(c, '')
+    def filterFilename(self, filename: str):
+        filename = filename.replace(' ', '_')
+        filename = re.sub(r'[^\w\s.-]', '_', filename)
         return filename
 
 
