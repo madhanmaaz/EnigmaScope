@@ -1,7 +1,7 @@
 <p align="center">
     <img src="./banner.png">
     <h1 align="center">EnigmaScope</h1>
-    <p align="center">EnigmaScope is a Python utility that hides files in any kind of another file. This tool is ideal for cybersecurity enthusiasts, ethical hackers, and anyone looking to protect sensitive information.
+    <p align="center">EnigmaScope is a Python tool that hides files in any kind of another file. Simple: Hide any file in any file 
      <h1 align="center">Youtube Video</h1>
     <a href="https://www.youtube.com/watch?v=5RIibpcbWHc"><img src="https://img.youtube.com/vi/5RIibpcbWHc/maxresdefault.jpg"></a>
 </p>
