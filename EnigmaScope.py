@@ -5,6 +5,7 @@ from tabulate import tabulate
 import argparse
 import requests
 import datetime
+import getpass
 import bcrypt
 import base64
 import json
@@ -83,7 +84,7 @@ class EnigmaScope:
         
         if len(data) == 1:
             Printer.log("creating new source.")
-            newPassword = input("Enter a new password (you cannot recover data without this password): ").encode()
+            newPassword = getpass.getpass("Enter a new password (you cannot recover data without this password): ").encode()
             if len(newPassword) == 0:
                 Printer.err("password length is 0.")
                 return False
@@ -110,7 +111,7 @@ class EnigmaScope:
         elif not res:
             return False
         
-        password = input("Enter password: ").encode()
+        password = getpass.getpass("Enter password: ").encode()
         if not bcrypt.checkpw(password, res['token'].encode()):
             Printer.err("incorrect password.")
             return False
