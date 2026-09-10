@@ -1,5 +1,5 @@
 <p align="center">
-    <img src="https://raw.githubusercontent.com/madhanmaaz/EnigmaScope/refs/heads/main/assets/enigmascope.webp" />
+    <img src="https://raw.githubusercontent.com/madhanmaaz/EnigmaScope/refs/heads/main/assets/enigmascope.webp"  width="200"/>
 </p>
 
 <h1 align="center">EnigmaScope</h1>
