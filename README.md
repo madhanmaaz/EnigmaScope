@@ -1,14 +1,14 @@
 <p align="center">
-    <img src="./banner.png">
-    <h1 align="center">EnigmaScope</h1>
-    <p align="center">EnigmaScope is a Python tool that hides files in any kind of another file. Simple: Hide any file in any file 
-     <h1 align="center">Youtube Video</h1>
-    <a href="https://www.youtube.com/watch?v=5RIibpcbWHc"><img src="https://img.youtube.com/vi/5RIibpcbWHc/maxresdefault.jpg"></a>
-</p>
+    <img src="https://raw.githubusercontent.com/madhanmaaz/EnigmaScope/refs/heads/main/assets/enigmascope.webp" />
 </p>
 
-#### Installation
-- Clone the repository and install the necessary dependencies:
+<h1 align="center">EnigmaScope</h1>
+
+<p align="center">
+    Hide encrypted files inside any binary file — images, videos, PDFs, and more.
+</p>
+
+## Installation
 
 ```bash
 git clone https://github.com/madhanmaaz/EnigmaScope.git
@@ -16,73 +16,60 @@ cd EnigmaScope
 pip install -r requirements.txt
 ```
 
-> [!IMPORTANT]
-> - When the file gets edited, all secure contents of the file are lost.
-> - There is no recovery option if you forget the password.
+## Usage
 
-#### Usage
-1. Load an Image File.
+Load a carrier file to open or create a capsule:
 
-- To load an image file and set a password, use:
 ```bash
-python EnigmaScope.py --load secure.png
+python enigmascope.py --load deadpool_wallpaper.jpg
 ```
 
-2. Display the Help Menu.
-- To see available commands, type:
-```bash
-[secure.png]> help
+On first load, you will be prompted to set a password. On subsequent loads, you will be prompted to enter it.
 
+## Commands
+
+```
 +======== COMMANDS ========+
-help        Help menu.
-q           Exit.
+  help               This menu.
+  q                  Exit.
+  clear              Clear screen.
 
-list        List all files.
-write       <URL or FILE>   ex: write /path/to/file, write https://example.com/data.zip
-read        <ID or *>       ex: read 0, read *
-delete      <ID or *>       ex: delete 0, delete *
+  list               List all files.
+  write  <FILE ...>  Append file(s). Supports globs and multiple paths.
+  dwrite <FILE ...>  Same as write but deletes source file(s) after.
+  read   <ID | *>    Decrypt and export file(s).
+  delete <ID | *>    Remove file(s) from capsule.
++==========================+
 ```
 
-3. Add a File.
-- To add a file to the image, use:
+**Examples**
+
+```
+[wallpaper]> write report.pdf
+[wallpaper]> write /home/user/docs/*.txt
+[wallpaper]> write a.txt b.txt c.txt
+
+[wallpaper]> list
+[wallpaper]> read 0
+[wallpaper]> read *
+
+[wallpaper]> delete 2
+[wallpaper]> delete *
+```
+
+## Try it
+
+The wallpaper below is a live capsule containing sample files (`txt`, `pdf`, `mp4`, `mp3`). Load it and use password `123` to explore the contents.
+
 ```bash
-[secure.png]> write path/to/passwords.txt
-[+] write 'passwords.txt' successfully.
+python enigmascope.py --load deadpool_wallpaper.jpg
 ```
 
-4. List Files.
-- To list all files embedded in the image, use:
-```bash
-[secure.png]> list
+![deadpool wallpaper](./deadpool_wallpaper.jpg)
 
-  ID  FILE                      TIME                          SIZE
-----  ------------------------  --------------------------  ------
-   0  passwords.txt             2024-05-14 13:37:01.556315    0
-   1  elonmusk.mp4              2024-05-14 13:38:20.250163    4.05
-   2  ironman.mp3               2024-05-14 13:40:02.469420    0.43
-   3  deadpool.jpg              2024-05-14 13:40:42.439906    0.08
-   4  c4611_sample_explain.pdf  2024-05-14 13:41:26.543092    0.08
-```
+![screenshot](./assets/screenshot.png)
 
-5. Read a File.
-- To read a file, specify its ID:
-```bash
-[secure.png]> read 0
-[+] Read success. saved on 'c:\users\username\documents\enigmascope\secure\passwords.txt'
-```
-
-5. Delete a File.
-- To delete a file, specify its ID:
-```bash
-[secure.png]> delete 0
-[+] file 'passwords.txt' deleted successfully.
-```
-
-#### Testing with a Dragon Wallpaper
-- For example, the below wallpaper image (`secure.png`) contains files like `txt`, `pdf`, `mp4`, `mp3`, etc. To test, use the dragon wallpaper secure.png. The password is 123.
-- Run - `python EnigmaScope.py -l secure.png`
-
-![test image](./secure.png)
-
-![terminal](scr/terminal.png)
-
+> [!IMPORTANT]
+> If the carrier file is edited or re-encoded by any external application (resized, re-compressed, converted), the appended hidden data will be lost with no way to recover it. Always keep an unmodified backup of the carrier file.
+>
+> There is no password recovery. If the password is forgotten, the encrypted contents cannot be retrieved.

@@ -1,292 +1,478 @@
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-from cryptography.hazmat.primitives import hashes
-from cryptography.fernet import Fernet
-from tabulate import tabulate
 import argparse
-import requests
-import datetime
 import getpass
-import bcrypt
-import base64
+import glob
+import hashlib
 import json
-import zlib
+import mimetypes
 import os
 import re
+import secrets
+import struct
+import sys
+from datetime import datetime
+
+import cryptography.exceptions
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from tabulate import tabulate
+
+VERSION = "2.0.0"
+MAGIC_FOOTER = b"ENIGMA1\x00"
+MAGIC_META = b"ENIGMETA"
+MAGIC_ENTRY = b"ENIGENTR"
+FOOTER_FMT = ">QQ8s"
+FOOTER_SIZE = struct.calcsize(FOOTER_FMT)  # 24
+COPY_CHUNK = 1 << 20  # 1 MiB
+
+SCRYPT_N, SCRYPT_R, SCRYPT_P, KEY_LEN = 2**14, 8, 1, 32
 
 
-class Printer:
+# crypto
+class Crypto:
     @staticmethod
-    def log(data: str):
-        print(f"[+] {data.capitalize()}")
-
-
-    @staticmethod
-    def err(data: str):
-        print(f"[-] {str(data).capitalize()}")
-
-
-class Encryptor:
-    @staticmethod
-    def passwordToKey(password: bytes):
-        kdf = PBKDF2HMAC(
-            algorithm=hashes.SHA256(),
-            iterations=100000,
-            salt=b"EnigmaScope-salt",
-            length=32
+    def deriveKey(password: str, salt: bytes) -> bytes:
+        return hashlib.scrypt(
+            password.encode(),
+            salt=salt,
+            n=SCRYPT_N,
+            r=SCRYPT_R,
+            p=SCRYPT_P,
+            dklen=KEY_LEN,
         )
-        key = base64.urlsafe_b64encode(kdf.derive(password))
-        return key
-    
 
     @staticmethod
-    def encrypt(password: bytes, data: bytes):
-        try:
-            cipher = Fernet(Encryptor.passwordToKey(password))
-            return cipher.encrypt(data)
-        except:
-            Printer.err("encryption failed.")
-            return False
-
+    def encrypt(data: bytes, key: bytes) -> bytes:
+        nonce = secrets.token_bytes(12)
+        return nonce + AESGCM(key).encrypt(nonce, data, None)
 
     @staticmethod
-    def decrypt(password: bytes, data: bytes):
+    def decrypt(blob: bytes, key: bytes) -> bytes:
+        return AESGCM(key).decrypt(blob[:12], blob[12:], None)
+
+    @staticmethod
+    def createVerifier(key: bytes) -> str:
+        """Create an encrypted password-verification token."""
+        challenge = secrets.token_bytes(16)
+        verifier = Crypto.encrypt(challenge, key)
+        return verifier.hex()
+
+    @staticmethod
+    def verifyPassword(token: str, key: bytes) -> bool:
+        """Verify that the supplied key can decrypt the verifier."""
         try:
-            cipher = Fernet(Encryptor.passwordToKey(password))
-            return cipher.decrypt(data)
-        except:
-            Printer.err("decryption failed.")
-            return False
-
-
-class EnigmaScope:
-    def __init__(self, imageFilePath) -> None:
-        self.imageFilePath = imageFilePath
-        self.imageName = os.path.basename(self.imageFilePath)
-        self.outputFolder = os.path.join(os.path.expanduser('~'), "Documents", "EnigmaScope", self.imageName.split(".")[0])
-        self.TAG = zlib.compress(b"(ENIGMASCOPE-START)[ENIGMASCOPE-DATA](ENIGMASCOPE-END)")
-
-        if not os.path.exists(self.outputFolder):
-            os.makedirs(self.outputFolder)
-
-    def sourceBufferWriter(self, jsonData):
-        with open(self.imageFilePath, "rb") as f:
-            data = f.read().split(self.TAG)
-        
-        jsonData = json.dumps(jsonData).encode()
-        data = data[0] + self.TAG + zlib.compress(jsonData)
-        with open(self.imageFilePath, "wb") as f:
-            f.write(data)
-
-
-    def sourceBufferReader(self):
-        with open(self.imageFilePath, "rb") as f:
-            data = f.read().split(self.TAG)
-        
-        if len(data) == 1:
-            Printer.log("creating new source.")
-            newPassword = getpass.getpass("Enter a new password (you cannot recover data without this password): ").encode()
-            if len(newPassword) == 0:
-                Printer.err("password length is 0.")
-                return False
-            
-            token = bcrypt.hashpw(newPassword, bcrypt.gensalt())
-            config = {
-                "token": token.decode(),
-                "data": {}
-            }
-            self.password = newPassword
-            self.sourceBufferWriter(config)
-            return "new"
-        elif len(data) == 2:
-            return json.loads(zlib.decompress(data[1]))
-        
-        return False
-
-    def login(self):
-        res = self.sourceBufferReader()
-
-        if res == "new":
-            Printer.log("new secure source was created.")
+            Crypto.decrypt(bytes.fromhex(token), key)
             return True
-        elif not res:
+        except (ValueError, cryptography.exceptions.InvalidTag):
             return False
-        
-        password = getpass.getpass("Enter password: ").encode()
-        if not bcrypt.checkpw(password, res['token'].encode()):
-            Printer.err("incorrect password.")
-            return False
-        
-        Printer.log("password match success.")
-        self.password = password
-        return True
-    
-
-    def run(self):
-        self.helpMenu()
-
-        while True:
-            userInput = input(f"[{self.imageName}]> ")
-
-            if userInput == "q":
-                break
-            elif userInput == "help":
-                self.helpMenu()
-            elif userInput == "list":
-                self.listSource()
-            elif userInput.startswith("write "):
-                self.writeSource(userInput[6:])
-            elif userInput.startswith("read "):
-                self.readSource(userInput[5:])
-            elif userInput.startswith("delete "):
-                self.deleteSource(userInput[7:])
 
 
-    def listSource(self):
-        data = self.sourceBufferReader()['data']
-        tableData = []
-        for index, fileName in enumerate(data):
-            tableData.append([
-                index, 
-                fileName, 
-                data[fileName]['time'],
-                data[fileName]['size']
-            ])
-        
-        print(f'\n{tabulate(tableData, headers=["ID", "FILE", "TIME", "SIZE"])}\n')
+# low-level I/O
+class LLIO:
+    @staticmethod
+    def writeMetadata(f, salt: bytes, token: str):
+        tb = token.encode()
+        f.write(MAGIC_META)
+        f.write(struct.pack(">I", len(salt)))
+        f.write(salt)
+        f.write(struct.pack(">I", len(tb)))
+        f.write(tb)
 
-    
-    def writeSource(self, filePath):
-        if os.path.exists(filePath) and os.path.isfile(filePath):
-            fileName = os.path.basename(filePath)
-            fileName = self.filterFilename(fileName)
-            
-            with open(filePath, "rb") as f:
-                binData = f.read()
-                encryptedData = Encryptor.encrypt(self.password, binData)
+    @staticmethod
+    def writeFooter(f, startOffset: int, count: int):
+        f.write(struct.pack(FOOTER_FMT, startOffset, count, MAGIC_FOOTER))
 
-            if not encryptedData: return
-            oldData = self.sourceBufferReader()
-            oldData['data'][fileName] = {
-                "size": "{:.2f}".format(len(binData) / (1024 * 1024)),
-                "time": str(datetime.datetime.now()),
-                "bin": encryptedData.decode()
-            }
-            self.sourceBufferWriter(oldData)
-            Printer.log(f"write '{fileName}' successfully.")
+    @staticmethod
+    def writeEntry(f, header: dict, encryptedData: bytes) -> int:
+        """Write one entry blob; return the absolute file offset of encrypted_data."""
+        headerBytes = json.dumps(header).encode()
+        f.write(MAGIC_ENTRY)
+        f.write(struct.pack(">I", len(headerBytes)))
+        f.write(headerBytes)
+        f.write(struct.pack(">Q", len(encryptedData)))
+        dataOffset = f.tell()
+        f.write(encryptedData)
+        return dataOffset
+
+    @staticmethod
+    def readMetadata(f):
+        if f.read(8) != MAGIC_META:
+            raise ValueError("Corrupt capsule: bad META magic.")
+
+        (n,) = struct.unpack(">I", f.read(4))
+        salt = f.read(n)
+        (n,) = struct.unpack(">I", f.read(4))
+        token = f.read(n).decode()
+        return salt, token
+
+    @staticmethod
+    def readFooter(f, filesize: int):
+        f.seek(filesize - FOOTER_SIZE)
+        startOffset, count, magic = struct.unpack(FOOTER_FMT, f.read(FOOTER_SIZE))
+
+        if magic != MAGIC_FOOTER:
+            raise ValueError("Not a valid EnigmaScope capsule.")
+
+        return startOffset, count
+
+
+# capsule operations
+class Capsule:
+    @staticmethod
+    def scanEntries(f, count: int) -> list:
+        """Read headers + record data offsets. Skips over encrypted_data — never loads it."""
+        entries = []
+        for _ in range(count):
+            if f.read(8) != MAGIC_ENTRY:
+                raise ValueError("Corrupt capsule: bad ENTRY magic.")
+
+            (n,) = struct.unpack(">I", f.read(4))
+            header = json.loads(f.read(n))
+            (dataLen,) = struct.unpack(">Q", f.read(8))
+            dataOffset = f.tell()
+            f.seek(dataLen, 1)  # skip the blob
+            entries.append(
+                {"header": header, "dataOffset": dataOffset, "dataLen": dataLen}
+            )
+
+        return entries
+
+    @staticmethod
+    def init(capsulePath: str, salt: bytes, token: str) -> None:
+        """Stamp META + empty FOOTER after the existing image bytes."""
+        startOffset = os.path.getsize(capsulePath)
+
+        with open(capsulePath, "ab") as f:
+            LLIO.writeMetadata(f, salt, token)
+            LLIO.writeFooter(f, startOffset, 0)
+
+    @staticmethod
+    def isNew(capsulePath: str) -> bool:
+        if os.path.getsize(capsulePath) < FOOTER_SIZE:
+            return True
+
+        with open(capsulePath, "rb") as f:
+            f.seek(-FOOTER_SIZE, 2)
+            _, _, magic = struct.unpack(FOOTER_FMT, f.read(FOOTER_SIZE))
+        return magic != MAGIC_FOOTER
+
+    @staticmethod
+    def open(capsulePath: str):
+        """Return (startOffset, salt, token, entries). No bulk data in RAM."""
+        sz = os.path.getsize(capsulePath)
+        with open(capsulePath, "rb") as f:
+            startOffset, count = LLIO.readFooter(f, sz)
+            f.seek(startOffset)
+            salt, token = LLIO.readMetadata(f)
+            entries = Capsule.scanEntries(f, count)
+
+        return startOffset, salt, token, entries
+
+    @staticmethod
+    def append(
+        capsulePath: str,
+        header: dict,
+        encryptedData: bytes,
+        startOffset: int,
+        newCount: int,
+    ):
+        """
+        Seek to the old footer position, overwrite it with the new entry,
+        then write a fresh footer. Image bytes are never read.
+        Returns the data_offset of the new entry.
+        """
+        sz = os.path.getsize(capsulePath)
+        with open(capsulePath, "r+b") as f:
+            f.seek(sz - FOOTER_SIZE)  # overwrite old footer
+            dataOffset = LLIO.writeEntry(f, header, encryptedData)
+            LLIO.writeFooter(f, startOffset, newCount)
+
+        return dataOffset
+
+    @staticmethod
+    def compact(
+        capsulePath: str, startOffset: int, salt: bytes, token: str, keep: list
+    ) -> list:
+        """
+        Rewrite the capsule keeping only `keep` entries.
+        Image bytes are copied in 1 MiB chunks — never fully in RAM.
+        `keep` entries are read one at a time from the source file.
+        Returns updated entries list with corrected data_offsets.
+        """
+        tmp = capsulePath + ".enigmatmp"
+        updated = []
+
+        try:
+            with open(capsulePath, "rb") as src, open(tmp, "wb") as dst:
+                # copy image in chunks
+                remaining = startOffset
+                while remaining > 0:
+                    chunk = src.read(min(COPY_CHUNK, remaining))
+                    dst.write(chunk)
+                    remaining -= len(chunk)
+
+                LLIO.writeMetadata(dst, salt, token)
+
+                for e in keep:
+                    src.seek(e["dataOffset"])
+                    blob = src.read(e["dataLen"])
+                    newOffset = LLIO.writeEntry(dst, e["header"], blob)
+                    updated.append({**e, "dataOffset": newOffset})
+
+                LLIO.writeFooter(dst, startOffset, len(updated))
+
+            os.replace(tmp, capsulePath)
+        except Exception:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+            raise
+
+        return updated
+
+    @staticmethod
+    def list(entries: list) -> None:
+        if not entries:
+            print("no files stored.")
             return
-        
-        if 'http' in filePath:
-            try:
-                fileName = filePath.split("/")[-1]
-                fileName = self.filterFilename(fileName)
-                res = requests.get(filePath, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"})
-                
-                if res.status_code == 200:
-                    binData = res.content
-                    encryptedData = Encryptor.encrypt(self.password, binData)
-                    if not encryptedData: return
 
-                    oldData = self.sourceBufferReader()
-                    oldData['data'][fileName] = {
-                        "size": "{:.2f}".format(len(binData) / (1024 * 1024)),
-                        "time": str(datetime.datetime.now()),
-                        "bin": encryptedData.decode()
-                    }
-                    self.sourceBufferWriter(oldData)
-                    Printer.log(f"write '{fileName}' successfully.")
-                else:
-                    Printer.err(f"STATUS CODE: {res.status_code}")
-            except Exception as e:
-                Printer.err(e)
-            return
-        
-        Printer.err(f"URL or FILE '{filePath}' not found.")
+        rows = [
+            [i, e["header"]["name"], e["header"]["time"], e["header"]["size"]]
+            for i, e in enumerate(entries)
+        ]
+
+        print(
+            "\n",
+            tabulate(
+                rows,
+                headers=["ID", "FILE", "TIME", "SIZE"],
+                colalign=("right", "left", "left", "right"),
+            ),
+            "\n",
+        )
+
+    @staticmethod
+    def resolve(arg: str, total: int):
+        if arg == "*":
+            return list(range(total))
+        try:
+            idx = int(arg)
+            return [idx] if 0 <= idx < total else None
+        except ValueError:
+            return None
 
 
-    def readSource(self, fileId):
-        data = self.sourceBufferReader()['data']
-
-        if fileId == "*":
-            for fileName in data:
-                decrypedData = Encryptor.decrypt(self.password, data[fileName]['bin'])
-                if not decrypedData: continue
-                filePath = os.path.join(self.outputFolder, fileName)
-                with open(filePath, "wb") as f:
-                    f.write(decrypedData)
-                Printer.log(f"Read success. Saved on '{filePath}'")
-            return
-        
-        for fileIndex, fileName in enumerate(data):
-            if int(fileId) == fileIndex:
-                decrypedData = Encryptor.decrypt(self.password, data[fileName]['bin'])
-                if not decrypedData: return
-                filePath = os.path.join(self.outputFolder, fileName)
-                with open(filePath, "wb") as f:
-                    f.write(decrypedData)
-                Printer.log(f"Read success. Saved on '{filePath}'")
-                return
-            
-        Printer.err(f"ID not found")
-
-    def deleteSource(self, fileId):
-        data = self.sourceBufferReader()
-
-        if fileId == "*":
-            data['data'] = {}
-            self.sourceBufferWriter(data)
-            Printer.log(f"all deleted successfully.")
-            return
-
-        for fileIndex, fileName in enumerate(data['data']):
-            if int(fileId) == fileIndex:
-                del data['data'][fileName]
-                self.sourceBufferWriter(data)
-                Printer.log(f"file '{fileName}' deleted successfully.")
-                return
-            
-        Printer.err(f"ID not found")
-
-    
-    def filterFilename(self, filename: str):
-        filename = filename.replace(' ', '_')
-        filename = re.sub(r'[^\w\s.-]', '_', filename)
-        return filename
-
-
-    def helpMenu(self):
-        print('''
+HELP = """
 +======== COMMANDS ========+
-help        Help menu.
-q           Exit.
-              
-list        List all files.     
-write       <URL or FILE>   ex: write /path/to/file, write https://example.com/data.zip
-read        <ID or *>       ex: read 0, read *      
-delete      <ID or *>       ex: delete 0, delete *
-''')
-        
+help               This menu.
+q                  Exit.
+clear              Clear screen.
+
+list               List all files.
+write  <FILE ...>  Append file(s). Supports globs and multiple paths.
+dwrite <FILE ...>  Same as write but deletes source file(s) after.
+read   <ID | *>    Decrypt and export file(s).
+delete <ID | *>    Remove file(s) from capsule.
+"""
+
+
+def filterFilename(filename: str):
+    return re.sub(r"[^A-Za-z0-9_.-]", "_", filename.replace(" ", "_"))
+
+
+def repl(
+    path: str, startOffset: int, salt: bytes, key: bytes, token: str, entries: list
+) -> None:
+    name = os.path.basename(path).replace(".", "_")
+    outputDir = os.path.join(os.path.dirname(os.path.abspath(path)), name)
+
+    print(HELP)
+
+    while True:
+        try:
+            raw = input(f"[{name}]> ").strip()
+        except EOFError:
+            break
+
+        if not raw:
+            continue
+
+        parts = raw.split()
+        cmd = parts[0].lower()
+        args = parts[1:]
+
+        if cmd == "q":
+            print("Bye.")
+            break
+
+        elif cmd == "clear":
+            os.system("cls" if os.name == "nt" else "clear")
+
+        elif cmd == "help":
+            print(HELP)
+
+        elif cmd == "list":
+            Capsule.list(entries)
+
+        elif cmd in ("write", "dwrite"):
+            if not args:
+                print(f"Usage: {cmd} <FILE ...>")
+                continue
+
+            targets = []
+            for a in args:
+                expanded = glob.glob(a)
+                targets.extend(expanded if expanded else [a])
+
+            for fp in targets:
+                if not os.path.isfile(fp):
+                    print(f"[-] not a file: {fp}")
+                    continue
+
+                try:
+                    with open(fp, "rb") as fh:
+                        rawData = fh.read()
+
+                    ft = mimetypes.guess_type(fp)[0] or "application/octet-stream"
+                    enc = Crypto.encrypt(rawData, key)
+                    header = {
+                        "name": filterFilename(os.path.basename(fp)),
+                        "time": str(datetime.now()),
+                        "size": len(rawData),
+                        "filetype": ft,
+                    }
+                    doff = Capsule.append(
+                        path, header, enc, startOffset, len(entries) + 1
+                    )
+                    entries.append(
+                        {"header": header, "dataOffset": doff, "dataLen": len(enc)}
+                    )
+                    del rawData, enc
+
+                    if cmd == "dwrite":
+                        os.remove(fp)
+                        print(f"[+] {header['name']} written and deleted.")
+                    else:
+                        print(f"[+] {header['name']} written.")
+                except Exception as ex:
+                    print(f"[-] {fp}: {ex}")
+
+        elif cmd == "read":
+            if not args:
+                print("Usage: read <ID | *>")
+                continue
+
+            ids = Capsule.resolve(args[0], len(entries))
+            if ids is None:
+                print(f"[-] Invalid id '{args[0]}'.")
+                continue
+
+            with open(path, "rb") as f:
+                print("\n[+] Decrypting...")
+
+                for idx in ids:
+                    e = entries[idx]
+                    h = e["header"]
+
+                    try:
+                        f.seek(e["dataOffset"])
+                        blob = f.read(e["dataLen"])  # one entry at a time
+                        data = Crypto.decrypt(blob, key)
+                        del blob
+                    except Exception:
+                        print(f"[-] Decryption failed for [{idx}] {h['name']}.")
+                        continue
+
+                    os.makedirs(outputDir, exist_ok=True)
+                    out = os.path.join(outputDir, f"{idx}_{h['name']}")
+                    with open(out, "wb") as fh:
+                        fh.write(data)
+                    print(f"[+] ({idx}) {h['name']} -> {out}")
+                    del data
+
+                print("[+] done.\n")
+
+        elif cmd == "delete":
+            if not args:
+                print("  Usage: delete <ID | *>")
+                continue
+
+            ids = Capsule.resolve(args[0], len(entries))
+            if ids is None:
+                print(f"[-] Invalid id '{args[0]}'.")
+                continue
+
+            idSet = set(ids)
+            keep = [e for i, e in enumerate(entries) if i not in idSet]
+
+            for idx in sorted(ids):
+                print(f"[+] deleted [{idx}] {entries[idx]['header']['name']}")
+            entries[:] = Capsule.compact(path, startOffset, salt, token, keep)
+
+        else:
+            print(f"[-] Unknown command '{cmd}'. Type 'help'.")
+
 
 def main():
-    parser = argparse.ArgumentParser(description="EnigmaScope is a versatile Python tool designed to conceal and encapsulate diverse elements within a unified framework.")
-    parser.add_argument("-l", "--load", required=True, help="Load the source file. ex: wallpaper.jpg, icon.png ....")
+    parser = argparse.ArgumentParser(
+        description="EnigmaScope — encrypted file capsule inside an image."
+    )
+
+    parser.add_argument(
+        "-v", "--version", action="version", version=f"EnigmaScope {VERSION}"
+    )
+    parser.add_argument(
+        "-l",
+        "--load",
+        required=True,
+        help="Capsule image. ex: wallpaper.jpg, app.exe, run.dll, movie.mp4, sample.pdf ...etc",
+    )
+
     args = parser.parse_args()
-    imageFilePath = args.load
+    capsulePath = args.load
 
-    if not os.path.exists(imageFilePath):
-        Printer.err("source file not found.")
+    if not os.path.exists(capsulePath):
+        print(f"[-] capsule not found: {capsulePath}")
         return
-    
-    try:
-        enigmaScope = EnigmaScope(imageFilePath)
-        if enigmaScope.login():
-            enigmaScope.run()
-    except KeyboardInterrupt:
-        Printer.log("KeyboardInterrupt - enigmaScope exit.")
-        exit(0)
-    except Exception as e:
-        Printer.err(e)
 
-    Printer.log("enigmaScope exit.")
-    
-if __name__ == "__main__":
-    main()
+    ft = mimetypes.guess_type(capsulePath)[0]
+    if ft and ft.startswith("text"):
+        print(f"[-] capsule is {ft}: {capsulePath} — don't use text/* files.")
+        return
+
+    try:
+        if Capsule.isNew(capsulePath):
+            print("[*] New capsule detected.")
+
+            while True:
+                pw = getpass.getpass("Set password     : ")
+                pw2 = getpass.getpass("Confirm password : ")
+
+                if pw == pw2:
+                    break
+                print("[-] Passwords don't match. Try again.")
+
+            salt = secrets.token_bytes(16)
+            key = Crypto.deriveKey(pw, salt)
+            token = Crypto.createVerifier(key)
+
+            Capsule.init(capsulePath, salt, token)
+            startOffset, salt, token, entries = Capsule.open(capsulePath)
+            print("[+] Capsule initialised.\n")
+        else:
+            startOffset, salt, token, entries = Capsule.open(capsulePath)
+            pw = getpass.getpass("Password: ")
+            key = Crypto.deriveKey(pw, salt)
+
+            if not Crypto.verifyPassword(token, key):
+                print("[-] Invalid password")
+                return
+
+            print(f"[+] Unlocked — {len(entries)} file(s) stored.")
+
+        repl(capsulePath, startOffset, salt, key, token, entries)
+    except KeyboardInterrupt:
+        print("\nKeyboardInterrupt — enigmaScope exit.")
+        sys.exit(0)
+    except Exception as e:
+        print(f"[-] {e}")
+
+
+main()
